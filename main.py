@@ -1,11 +1,13 @@
+import os
 import random
 import psycopg2
+from psycopg2 import sql
 
 
 class ClientManagement:
     '''Класс позволяет удалять базу данных,
     создавать структуру базы данных,
-    создавать клиента по его данным:
+    создавать клиента с данными:
     имени, фамилии, email и телефону.'''
 
     def __init__(self, last_name: str, first_name: str,
@@ -19,114 +21,87 @@ class ClientManagement:
 
     def clear_db(self):
         '''Функция очищает базу данных (удаляет таблицы).'''
-        with psycopg2.connect(database='customer_base',
-                              user='postgres',
-                              password='postgres') as conn:
-            with conn.cursor() as cur:
-                cur.execute('''
-                DROP TABLE client_phone_number;
-                DROP TABLE client;
-                DROP TABLE phone_number;
-                ''')
-                conn.commit()
-                return print('База данных очищена.')
+        with conn.cursor() as cur:
+            cur.execute('''
+            DROP TABLE phone_number;
+            DROP TABLE client;
+            ''')
+            conn.commit()
+            return print('База данных очищена.')
 
     def create_db(self):
         '''Функция создает структуру базы данных (таблицы).'''
-        with psycopg2.connect(database='customer_base',
-                              user='postgres',
-                              password='postgres') as conn:
-            with conn.cursor() as cur:
-                cur.execute('''
-                CREATE TABLE IF NOT EXISTS client(
-                    client_id SERIAL PRIMARY KEY,
-                    last_name VARCHAR(20) NOT NULL,
-                    first_name VARCHAR(20) NOT NULL,
-                    email VARCHAR(30) UNIQUE NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS phone_number(
-                    phone_number_id SERIAL PRIMARY KEY,
-                    phone_number CHAR(11) UNIQUE NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS client_phone_number(
-                    client_phone_number_id SERIAL PRIMARY KEY,
-                    client_id INTEGER NOT NULL 
-                    REFERENCES client(client_id),
-                    phone_number_id INTEGER NOT NULL UNIQUE
-                    REFERENCES phone_number(phone_number_id)
-                );
-                ''')
-                conn.commit()
-                return print('База данных создана.')
+        with conn.cursor() as cur:
+            cur.execute('''
+            CREATE TABLE IF NOT EXISTS client(
+                client_id SERIAL PRIMARY KEY,
+                last_name VARCHAR(20) NOT NULL,
+                first_name VARCHAR(20) NOT NULL,
+                email VARCHAR(30) UNIQUE NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS phone_number(
+                phone_number_id SERIAL PRIMARY KEY,
+                client_ph_id INTEGER NOT NULL REFERENCES client(client_id),
+                phone_number CHAR(11) UNIQUE NOT NULL
+            );
+            ''')
+            conn.commit()
+            return print('База данных создана.')
 
     def add_new_client(self):
         '''Функция, позволяющая добавить нового клиента.'''
-        with psycopg2.connect(database='customer_base', user='postgres',
-                              password='postgres'
-                              ) as conn:
-            with conn.cursor() as cur:
-                cur.execute(f'''
-                    INSERT INTO client(last_name, first_name, email) 
-                    VALUES('{self.last_name}', '{self.first_name}', 
-                    '{self.email}') RETURNING client_id;
-                    ''')
-                num_client_id = cur.fetchone()[0]
-                self.client_id = num_client_id
-                return print(f'Данные клиента {self.first_name} '
-                             f'{self.last_name} добавлены в базу.')
+        with conn.cursor() as cur:
+            cur.execute('''
+                INSERT INTO client(last_name, first_name, email)
+                VALUES(%(last_name)s, %(first_name)s, %(email)s) 
+                RETURNING client_id
+                ;
+                ''', {
+                'last_name': self.last_name,
+                'first_name': self.first_name,
+                'email': self.email
+            })
+            conn.commit()
+            num_client_id = cur.fetchone()[0]
+            self.client_id = num_client_id
+            return print(f'Данные клиента {self.first_name} '
+                         f'{self.last_name} добавлены '
+                         f'в базу. Клиент id: {self.client_id}.')
 
     def add_new_phone_number(self):
         '''Функция, позволяющая добавить телефон для существующего клиента.'''
         if isinstance(self.phone_number, int | str):
-            with psycopg2.connect(database='customer_base',
-                                  user='postgres',
-                                  password='postgres'
-                                  ) as conn:
-                with conn.cursor() as cur:
-                    cur.execute(f'''
-                        INSERT INTO phone_number(phone_number) 
-                        VALUES({self.phone_number}) RETURNING phone_number_id
-                        ;
-                        ''')
-                    num_phone_id = cur.fetchone()[0]
-                    conn.commit()
-                    self.phone_number_id.append(num_phone_id)
-                    return ClientManagement.unification_client_phone_number(self)
+            with conn.cursor() as cur:
+                cur.execute('''
+                    INSERT INTO phone_number(client_ph_id, phone_number)
+                    VALUES(%s, %s) 
+                    RETURNING phone_number_id
+                    ;
+                    ''', (self.client_id, self.phone_number))
+                num_phone_id = cur.fetchone()[0]
+                conn.commit()
+                self.phone_number_id.append(num_phone_id)
+                return print(f'Номер {self.phone_number} добавлен '
+                             f'к клиенту с id {self.client_id}')
         elif isinstance(self.phone_number, list):
             for number in self.phone_number:
                 if number is not None:
-                    with psycopg2.connect(database='customer_base',
-                                          user='postgres',
-                                          password='postgres'
-                                          ) as conn:
-                        with conn.cursor() as cur:
-                            cur.execute(f'''
-                                INSERT INTO phone_number(phone_number) 
-                                VALUES({number}) RETURNING phone_number_id
-                                ;
-                                ''')
-                            num_phone_id = cur.fetchone()[0]
-                            conn.commit()
-                            self.phone_number_id.append(num_phone_id)
-            return ClientManagement.unification_client_phone_number(self)
-
-    def unification_client_phone_number(self):
-        '''Функция, объединяющая базу клиента с его номерами телефонов.'''
-        for num in self.phone_number_id:
-            with psycopg2.connect(database='customer_base', user='postgres',
-                                  password='postgres'
-                                  ) as conn:
-                with conn.cursor() as cur:
-                    cur.execute(f'''
-                                INSERT INTO client_phone_number(client_id,
-                                phone_number_id)
-                                VALUES({self.client_id}, {num}) 
-                                RETURNING client_phone_number_id;
-                                ''')
-                    conn.commit()
+                    with conn.cursor() as cur:
+                        cur.execute('''
+                            INSERT INTO phone_number(client_ph_id, 
+                            phone_number)
+                            VALUES(%s, %s) 
+                            RETURNING phone_number_id
+                            ;
+                            ''', (self.client_id, number))
+                        num_phone_id = cur.fetchone()[0]
+                        conn.commit()
+                        self.phone_number_id.append(num_phone_id)
+            return print(f"Номера {', '.join(self.phone_number)} добавлены "
+                         f"к клиенту с id {self.client_id}")
 
 
-class ChangeInfoClearClient:
+class ClearChangeInfo(ClientManagement):
     '''Класс позволяет изменить данные клиента,
     удалить номер телефона клиента, удалить клиента.'''
 
@@ -137,132 +112,98 @@ class ChangeInfoClearClient:
         self.target = target
         self.new_info = new_info
 
-    def choice_target(self):
-        '''Функция, определяющая выбранные изменения в данных клиента.'''
-        if self.target == 'last_name':
-            ChangeInfoClearClient.change_client_last_name(self)
-        elif self.target == 'first_name':
-            ChangeInfoClearClient.change_client_first_name(self)
-        elif self.target == 'email':
-            ChangeInfoClearClient.change_client_email(self)
-        elif self.target == 'phone_number':
-            ChangeInfoClearClient.change_client_phone_number(self)
-        elif self.target == 'delete_phone_number':
-            ChangeInfoClearClient.delete_client_phone_number(self)
-        elif self.target == 'delete_client':
-            ChangeInfoClearClient.delete_client(self)
-        else:
-            pass
-
-    def change_client_last_name(self):
-        '''Функция, позволяющая изменить фамилию клиента.'''
-        with psycopg2.connect(database='customer_base', user='postgres',
-                              password='postgres'
-                              ) as conn:
-            with conn.cursor() as cur:
-                cur.execute(f'''
-                    UPDATE client SET last_name=%s WHERE client_id=%s;
-                    ''', (f'{self.new_info}', self.client_id))
-                cur.execute('''
-                SELECT * FROM client;
-                ''')
-                db_info = cur.fetchall()
-                return print(db_info[-1])
-
-    def change_client_first_name(self):
-        '''Функция, позволяющая изменить имя клиента.'''
-        with psycopg2.connect(database='customer_base', user='postgres',
-                              password='postgres'
-                              ) as conn:
-            with conn.cursor() as cur:
-                cur.execute(f'''
-                    UPDATE client SET first_name=%s WHERE client_id=%s;
-                    ''', (f'{self.new_info}', self.client_id))
-                cur.execute('''
-                SELECT * FROM client;
-                ''')
-                db_info = cur.fetchall()
-                return print(db_info[-1])
-
-    def change_client_email(self):
-        '''Функция, позволяющая изменить почту клиента.'''
-        with psycopg2.connect(database='customer_base', user='postgres',
-                              password='postgres'
-                              ) as conn:
-            with conn.cursor() as cur:
-                cur.execute(f'''
-                    UPDATE client 
-                    SET email=%s 
-                    WHERE client_id=%s;
-                    ''', (f'{self.new_info}', self.client_id))
-                cur.execute('''
-                SELECT * FROM client;
-                ''')
-                db_info = cur.fetchall()
-                return print(db_info[-1])
-
-    def change_client_phone_number(self):
-        '''Функция, позволяющая изменить номер телефона клиента.'''
-        with psycopg2.connect(database='customer_base', user='postgres',
-                              password='postgres'
-                              ) as conn:
-            with conn.cursor() as cur:
-                cur.execute(f'''
-                    UPDATE phone_number 
-                    SET phone_number=%s 
-                    WHERE phone_number_id=%s;
-                    ''', (f'{self.new_info}', self.phone_number_id))
-                cur.execute('''
-                SELECT * FROM phone_number;
-                ''')
-                db_info = cur.fetchall()
-                return print(db_info[-1])
-
     def delete_client_phone_number(self):
         '''Функция, позволяющая удалить номер
         телефона существующего клиента.'''
-        with psycopg2.connect(database='customer_base', user='postgres',
-                              password='postgres'
-                              ) as conn:
-            with conn.cursor() as cur:
-                cur.execute(f'''
-                DELETE FROM client_phone_number WHERE phone_number_id=%s;
-                ''', (self.phone_number_id,))
-                cur.execute(f'''
-                DELETE FROM phone_number WHERE phone_number_id=%s;
-                ''', (self.phone_number_id,))
-                cur.execute('''
-                SELECT * FROM phone_number;
-                ''')
-                db_info = cur.fetchall()
-                return print(db_info)
+        with conn.cursor() as cur:
+            number = self.new_info or self.phone_number
+            cur.execute('''
+            DELETE 
+            FROM phone_number 
+            WHERE phone_number = %s
+            ;
+            ''', (number,))
+            cur.execute('''
+            SELECT * FROM phone_number
+            ;
+            ''')
+            conn.commit()
+            return print(f'Телефонный номер {number} удален.')
 
     def delete_client(self):
         '''Функция, позволяющая удалить существующего клиента.'''
-        with (psycopg2.connect(database='customer_base', user='postgres',
-                               password='postgres'
-                               ) as conn):
-            with conn.cursor() as cur:
-                cur.execute(f'''
-                SELECT phone_number_id 
-                FROM client_phone_number 
-                WHERE client_id=%s
+        with conn.cursor() as cur:
+            cur.execute('''
+            SELECT client_id
+            FROM client
+            WHERE client_id = %s
+            ;
+            ''', (self.client_id,))
+            req = cur.fetchone()
+            if isinstance(req, None | str):
+                return print(f'Клиента с id {self.client_id} в БД нет.')
+            elif isinstance(req, tuple):
+                cur.execute('''
+                SELECT phone_number
+                FROM phone_number
+                WHERE client_ph_id = %s
+                ;
                 ''', (self.client_id,))
-                phone_id_list = cur.fetchall()
-                for id in phone_id_list:
-                    self.phone_number_id = id
-                    ChangeInfoClearClient.delete_client_phone_number(self)
-                cur.execute(f'''
-                DELETE FROM client WHERE client_id=%s;
+                phone_num_list = cur.fetchall()
+                for id in phone_num_list:
+                    self.phone_number = id[0]
+                    ClearChangeInfo.delete_client_phone_number(self)
+                cur.execute('''
+                DELETE 
+                FROM client 
+                WHERE client_id = %s
+                ;
                 ''', (self.client_id,))
                 cur.execute('''
                 SELECT * FROM client;
                 ''')
-                db_info = cur.fetchall()
-                return print(db_info)
+                conn.commit()
+                return print(f'Клиент с id {self.client_id} из БД удален.')
+
+    def change_client(self):
+        '''Функция, позволяющая изменить данные клиента.'''
+        with conn.cursor() as cur:
+            request = sql.SQL('''
+                UPDATE client 
+                SET {target} = {new_info} 
+                WHERE client_id = {client_id};
+                ''').format(
+                target=sql.Identifier(self.target),
+                new_info=sql.Literal(self.new_info),
+                client_id=sql.Literal(self.client_id)
+            )
+            cur.execute(request)
+            cur.execute('''
+                SELECT * FROM client;
+                ''')
+            db_info = cur.fetchall()
+            conn.commit()
+            return print(f'Произошла замена {self.target} '
+                         f'в строке БД {db_info[-1]}')
+
+    def change_client_phone_number(self):
+        '''Функция, позволяющая изменить номер телефона клиента.'''
+        with conn.cursor() as cur:
+            cur.execute('''
+                UPDATE phone_number
+                SET phone_number=%s
+                WHERE phone_number_id=%s;
+                ''', (self.new_info, self.phone_number_id))
+            cur.execute('''
+            SELECT * FROM phone_number;
+            ''')
+            db_info = cur.fetchall()
+            conn.commit()
+            return print(f'Произошла замена номера телефона '
+                         f'на {db_info[-1][-1]}')
 
 
-class ClientSearch:
+class ClientSearch(ClientManagement):
     '''Класс позволяет найти клиента по его данным: имени,
     фамилии, email или телефону.'''
 
@@ -272,80 +213,74 @@ class ClientSearch:
         self.first_name = first_name
         self.email = email
         self.phone_number = phone_number
+        self.target = last_name or first_name or email or phone_number
+        self.result = None
+        self.tab = None
 
-    def find_client_last_name(self):
-        '''Функция ищет клиента по фамилии и сообщает о результате.'''
-        with psycopg2.connect(database='customer_base', user='postgres',
-                              password='postgres'
-                              ) as conn:
-            with conn.cursor() as cur:
-                cur.execute(f'''
-                    SELECT last_name FROM client WHERE last_name=%s;
-                    ''', (self.last_name,))
-                if cur.fetchone() is None:
-                    print(f'Клиента с фамилией {self.last_name} нет в БД')
-                else:
-                    print(f'{self.last_name} есть в БД')
-
-    def find_client_first_name(self):
-        '''Функция ищет клиента по имени и сообщает о результате.'''
-        with psycopg2.connect(database='customer_base', user='postgres',
-                              password='postgres'
-                              ) as conn:
-            with conn.cursor() as cur:
-                cur.execute(f'''
-                    SELECT first_name FROM client WHERE first_name=%s;
-                    ''', (self.first_name,))
-                if cur.fetchone() is None:
-                    print(f'Клиента с именем {self.first_name} нет в БД')
-                else:
-                    print(f'{self.first_name} есть в БД')
-
-    def find_client_email(self):
-        '''Функция ищет клиента по почте и сообщает о результате.'''
-        with psycopg2.connect(database='customer_base', user='postgres',
-                              password='postgres'
-                              ) as conn:
-            with conn.cursor() as cur:
-                cur.execute(f'''
-                    SELECT email FROM client WHERE email=%s;
-                    ''', (self.email,))
-                if cur.fetchone() is None:
-                    return print(f'Адреса почты {self.email} нет в БД')
-                else:
-                    return print(f'{self.email} есть в БД')
-
-    def find_client_phone_number(self):
-        '''Функция ищет клиента по номеру телефона и сообщает о результате.'''
-        with psycopg2.connect(database='customer_base', user='postgres',
-                              password='postgres'
-                              ) as conn:
-            with conn.cursor() as cur:
-                cur.execute(f'''
-                    SELECT phone_number FROM phone_number 
-                    WHERE phone_number=%s;
-                    ''', (self.phone_number,))
-                if cur.fetchone() is None:
-                    print(f'Телефонный номер {self.phone_number} '
-                          f'отсутствует в БД')
-                else:
-                    print(f'{self.phone_number} есть в БД')
+    def find_client(self):
+        '''Функция ищет клиента по фамилии,
+        имени, почте, номеру телефона
+        и сообщает о результате.'''
+        if self.last_name is None:
+            pass
+        else:
+            self.result = 'last_name'
+            self.tab = 'Фамилия'
+        if self.first_name is None:
+            pass
+        else:
+            self.result = 'first_name'
+            self.tab = 'Имя'
+        if self.email is None:
+            pass
+        else:
+            self.result = 'email'
+            self.tab = 'Почта'
+        if self.phone_number is None:
+            pass
+        else:
+            self.result = 'phone_number'
+            self.tab = 'Телефонный номер'
+        with conn.cursor() as cur:
+            request = sql.SQL('''
+                SELECT client_id
+                FROM client AS cl
+                JOIN phone_number AS ph ON cl.client_id = ph.client_ph_id
+                WHERE {column} = {target}
+                ;
+                ''').format(
+                column=sql.Identifier(self.result),
+                target=sql.Literal(self.target)
+            )
+            cur.execute(request)
+            client_list = list(cur.fetchall())
+            if len(client_list) == 0:
+                return print(f'Клиент с данными {self.tab} {self.target} '
+                             f'в БД отсутствует.')
+            else:
+                for client in list(set(client_list)):
+                    return print(f'{self.tab} {self.target} у клиента '
+                                 f'с id {client[0]}.')
 
 
 if __name__ == '__main__':
     last_name_list = ['Шмитс', 'Стиллавин', 'Толстой', 'Пушкин']
     first_name_list = ['Алекс', 'Валера', 'Олег', 'Святослав']
     email_list = ['8901@mail.ru', 'netology@mail.ru', 'minimi@yandex.ru',
-                  'chupakabra@ya.ru', 'none@none.ru', None,
+                  'chupakabra@ya.ru', 'none@none.ru',
                   '0124221', '11111']
     phone_number_list = ['89015817740',
                          ['89015817743', '89015817744', '89015817'],
-                         '89015817747', '890158177', None]
+                         '89015817747', '890158177', '80912223']
     new_last_name = ['Путин', 'Медведев', 'Жириновский']
     new_first_name = ['Владимир', 'Дмитрий', 'Сергей']
     new_email = ['099@mail.ru', '111@mail.ru', '222@mail.ru']
     new_phone_number = ['799999999', '7000000000', '7111111111']
 
+    with psycopg2.connect(database='customer_base',
+                          user='postgres',
+                          password='12345') as conn:
+        pass
     # Проверка по 5 клиентам (имя и фамилия выбираются случайным образом)
     new_client_1 = ClientManagement(random.choice(last_name_list),
                                     random.choice(first_name_list),
@@ -353,6 +288,7 @@ if __name__ == '__main__':
                                     phone_number_list[0])
     new_client_1.clear_db()  # Очищаем ранее созданную БД
     new_client_1.create_db()  # Создаем БД
+    print()
     new_client_1.add_new_client()
     new_client_1.add_new_phone_number()
 
@@ -383,41 +319,46 @@ if __name__ == '__main__':
                                     phone_number_list[4])
     new_client_5.add_new_client()
     new_client_5.add_new_phone_number()  # Телефон у клиента отсутствует
+    print()
 
     # Проверка по last_name
     find_client_last_name = ClientSearch(random.choice(last_name_list),
                                          None, None, None)
-    find_client_last_name.find_client_last_name()
+    find_client_last_name.find_client()
 
     # Проверка по first_name
     find_client_first_name = ClientSearch(None,
                                           random.choice(first_name_list),
                                           None, None)
-    find_client_first_name.find_client_first_name()
+    find_client_first_name.find_client()
 
     # Проверка по email
     find_client_email = ClientSearch(None, None,
                                      random.choice(email_list), None)
-    find_client_email.find_client_email()
+    find_client_email.find_client()
 
     # Проверка по phone_number
     find_client_phone_number_1 = ClientSearch(None, None, None,
                                               '89015817740')  # Номер есть
-    find_client_phone_number_1.find_client_phone_number()
+    find_client_phone_number_1.find_client()
     find_client_phone_number_2 = ClientSearch(None, None, None,
                                               '8901581740')  # Номера нет
-    find_client_phone_number_2.find_client_phone_number()
-
-    # Проверка внесения изменений
-    change_1 = ChangeInfoClearClient(1, None, 'last_name', random.choice(new_last_name))
-    change_1.choice_target()
-    change_2 = ChangeInfoClearClient(1, None, 'first_name', random.choice(new_first_name))
-    change_2.choice_target()
-    change_3 = ChangeInfoClearClient(1, None, 'email', random.choice(new_email))
-    change_3.choice_target()
-    change_4 = ChangeInfoClearClient(None, 1, 'phone_number', random.choice(new_phone_number))
-    change_4.choice_target()
-    change_5 = ChangeInfoClearClient(None, 5, 'delete_phone_number', None)
-    change_5.choice_target()
-    change_6 = ChangeInfoClearClient(5, None, 'delete_client', None)
-    change_6.choice_target()
+    find_client_phone_number_2.find_client()
+    #
+    #     # Проверка внесения изменений
+    change_1 = ClearChangeInfo(3, None, 'last_name', random.choice(new_last_name))
+    change_1.change_client()
+    change_2 = ClearChangeInfo(1, None, 'first_name', random.choice(new_first_name))
+    change_2.change_client()
+    change_3 = ClearChangeInfo(1, None, 'email', random.choice(new_email))
+    change_3.change_client()
+    change_4 = ClearChangeInfo(None, 1, 'phone_number', random.choice(new_phone_number))
+    change_4.change_client_phone_number()
+    print()
+    change_5 = ClearChangeInfo(None, None, None, '799999999')
+    change_5.delete_client_phone_number()
+    change_6 = ClearChangeInfo(40, None, None, None)
+    change_6.delete_client()
+    change_7 = ClearChangeInfo(2, None, None, None)
+    change_7.delete_client()
+    conn.close()
